@@ -45,10 +45,20 @@ pub(super) fn ensure_extension(mut path: PathBuf, kind: DocumentKind) -> PathBuf
 }
 
 pub(super) fn paths_equivalent(left: &Path, right: &Path) -> bool {
-    match (fs::canonicalize(left), fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
+    match (canonical_location(left), canonical_location(right)) {
+        (Some(left), Some(right)) => left == right,
         _ => left == right,
     }
+}
+
+// A deleted file cannot be canonicalized, so fall back to its canonical parent.
+fn canonical_location(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok().or_else(|| {
+        let name = path.file_name()?;
+        fs::canonicalize(path.parent()?)
+            .ok()
+            .map(|parent| parent.join(name))
+    })
 }
 
 pub(super) fn startup_paths_from_args() -> Vec<PathBuf> {
@@ -62,6 +72,17 @@ pub(super) fn startup_paths_from_args() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_files_compare_by_canonical_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        let canonical = fs::canonicalize(&nested).unwrap().join("gone.txt");
+        let indirect = directory.path().join("nested/../nested/gone.txt");
+        assert!(paths_equivalent(&canonical, &indirect));
+        assert!(!paths_equivalent(&canonical, &nested.join("other.txt")));
+    }
 
     #[test]
     fn extension_matching_preserves_case_and_unknown_fallbacks() {

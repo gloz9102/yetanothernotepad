@@ -332,6 +332,9 @@ mod tests {
         let new = directory.path().join("new");
         fs::create_dir(&old).unwrap();
         fs::create_dir(&new).unwrap();
+        // Watched directories are canonical (macOS /private/var, Windows long names).
+        let old = fs::canonicalize(old).unwrap();
+        let new = fs::canonicalize(new).unwrap();
         let old_path = old.join("note.txt");
         let new_path = new.join("note.txt");
         fs::write(&old_path, "old").unwrap();
