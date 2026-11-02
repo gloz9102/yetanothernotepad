@@ -128,8 +128,12 @@ Markdown 외부 링크는 HTTP, HTTPS, mailto만 허용하며 실행 실패는 �
 
 Linux, 모바일, 계정, 동기화, 보관함 검색, AI, 플러그인, 자동 업데이트, 앱스토어 배포 및 WYSIWYG 직접 편집은 이 MVP에 포함하지 않습니다.
 
+## 라이선스
+
+[MIT](LICENSE)
+
 ---
 
 ## English
 
-Yet Another Notepad is a small local-first text and Markdown editor for Windows and macOS. It offers tabbed `.txt`, `.md`, and `.markdown` editing, Markdown source/split/rich views with keyboard shortcuts, highlighting of every selected line, block-level linked highlighting between the source and rich view in split mode, encoding and line-ending preservation, crash recovery, safe local image rendering, and external-change conflict handling. See the Korean sections above for setup, shortcuts, verification commands, and MVP boundaries.
+Yet Another Notepad is a small local-first text and Markdown editor for Windows and macOS. It offers tabbed `.txt`, `.md`, and `.markdown` editing, Markdown source/split/rich views with keyboard shortcuts, highlighting of every selected line, block-level linked highlighting between the source and rich view in split mode, encoding and line-ending preservation, crash recovery, safe local image rendering, and external-change conflict handling. See the Korean sections above for setup, shortcuts, verification commands, and MVP boundaries. Licensed under the [MIT License](LICENSE).
