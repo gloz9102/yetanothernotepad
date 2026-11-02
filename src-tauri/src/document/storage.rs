@@ -6,7 +6,7 @@ use std::{
 
 use uuid::Uuid;
 
-use super::{DocumentError, DocumentResult};
+use super::types::{DocumentError, DocumentResult};
 
 pub fn read_limited(path: &Path, max_bytes: usize) -> DocumentResult<Vec<u8>> {
     let metadata = fs::metadata(path).map_err(map_io_error)?;

@@ -45,6 +45,8 @@ export const resources = {
       mixedLineWarning:
         '혼합 줄바꿈은 저장 시 문서의 주된 줄바꿈 방식으로 정규화됩니다. 계속할까요?',
       errorTitle: '작업을 완료하지 못했습니다',
+      fileMonitoringFailed:
+        '파일 변경 감시를 사용할 수 없어 자동으로 재시도 중입니다.\n{{details}}',
       dismiss: '확인',
       settings: '설정',
       theme: '테마',
@@ -126,6 +128,8 @@ export const resources = {
       mixedLineWarning:
         'Mixed line endings will be normalized to the document’s dominant style. Continue?',
       errorTitle: 'The operation could not be completed',
+      fileMonitoringFailed:
+        'File change monitoring is unavailable. Retrying automatically.\n{{details}}',
       dismiss: 'OK',
       settings: 'Settings',
       theme: 'Theme',

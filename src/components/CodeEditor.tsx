@@ -204,6 +204,14 @@ export function CodeEditor({
       history(),
       drawSelection(),
       disableTextDrag,
+      EditorView.domEventHandlers({
+        beforeinput: (event) => {
+          if (!editorSessions.isEditingLocked(documentIdRef.current))
+            return false
+          event.preventDefault()
+          return true
+        },
+      }),
       EditorState.allowMultipleSelections.of(true),
       indentOnInput(),
       bracketMatching(),

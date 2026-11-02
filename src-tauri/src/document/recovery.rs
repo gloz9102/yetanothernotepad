@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     codec::{LineEnding, TextEncoding},
     storage::atomic_write,
-    DocumentKind, DocumentResult,
+    types::{DocumentError, DocumentKind, DocumentResult},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub fn read_session(path: &Path) -> RecoveryFile {
 
 pub fn write_session(path: &Path, session: &RecoveryFile) -> DocumentResult<()> {
     let bytes = serde_json::to_vec(session).map_err(|error| {
-        super::DocumentError::new(
+        DocumentError::new(
             "WRITE_FAILED",
             format!("Failed to encode recovery: {error}"),
         )

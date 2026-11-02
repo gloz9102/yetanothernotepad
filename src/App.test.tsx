@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -7,6 +8,8 @@ import {
   within,
 } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { listen } from '@tauri-apps/api/event'
+import i18n from './i18n'
 import App from './App'
 import { useDocumentStore } from './stores/documentStore'
 import { editorSessions } from './lib/editorSessions'
@@ -313,6 +316,72 @@ describe('view mode shortcuts', () => {
 })
 
 describe('tab shortcuts', () => {
+  it('keeps only the native-closing tab read-only across switches and unlocks on failure', async () => {
+    const second = {
+      ...snapshot,
+      id: 'second',
+      path: '/test/second.txt',
+      displayName: 'second.txt',
+    }
+    api.restoreSession.mockResolvedValue({
+      documents: [snapshot, second].map((document) => ({
+        document,
+        dirty: false,
+        viewMode: 'source',
+        cursor: 0,
+        scrollTop: 0,
+        externalChange: false,
+      })),
+      activeId: snapshot.id,
+    })
+    let fail!: (error: unknown) => void
+    api.closeDocument.mockReturnValueOnce(
+      new Promise<void>((_, reject) => {
+        fail = reject
+      }),
+    )
+    render(<App />)
+    await screen.findByLabelText('test editor')
+    fireEvent.keyDown(window, { key: 'w', ctrlKey: true })
+    await waitFor(() => expect(api.closeDocument).toHaveBeenCalledOnce())
+    expect(screen.getByLabelText('test editor')).toHaveAttribute('readonly')
+    fireEvent.keyDown(window, { key: '2', ctrlKey: true })
+    expect(screen.getByLabelText('test editor')).not.toHaveAttribute('readonly')
+    fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+    expect(screen.getByLabelText('test editor')).toHaveAttribute('readonly')
+    await act(async () =>
+      fail({ code: 'WRITE_FAILED', message: 'native close failed' }),
+    )
+    expect(screen.getByLabelText('test editor')).not.toHaveAttribute('readonly')
+    expect(useDocumentStore.getState().documentsById[snapshot.id]).toBeDefined()
+  })
+
+  it('selects the previous tab for WebKitGTK Ctrl+Shift+Tab with an Unidentified key', async () => {
+    const second = { ...snapshot, id: 'second', displayName: 'second.txt' }
+    const third = { ...snapshot, id: 'third', displayName: 'third.txt' }
+    api.restoreSession.mockResolvedValue({
+      documents: [snapshot, second, third].map((document) => ({
+        document,
+        dirty: false,
+        viewMode: 'source',
+        cursor: 0,
+        scrollTop: 0,
+        externalChange: false,
+      })),
+      activeId: second.id,
+    })
+    render(<App />)
+    await screen.findByLabelText('test editor')
+
+    fireEvent.keyDown(window, {
+      ctrlKey: true,
+      shiftKey: true,
+      key: 'Unidentified',
+      code: 'Tab',
+    })
+    expect(useDocumentStore.getState().activeId).toBe(snapshot.id)
+  })
+
   it('cycles tabs with Ctrl+Tab and Cmd+Shift+] / [', async () => {
     const second = { ...snapshot, id: 'second', displayName: 'second.txt' }
     api.restoreSession.mockResolvedValue({
@@ -342,5 +411,51 @@ describe('tab shortcuts', () => {
     expect(activeId()).toBe('second')
     press({ code: 'BracketLeft', key: '{', ctrlKey: true, shiftKey: true })
     expect(activeId()).toBe('second')
+  })
+})
+
+describe('native listener lifecycle', () => {
+  it('keeps native registrations stable across edits and language changes', async () => {
+    await mount(false)
+    const registered = vi.mocked(listen).mock.calls.length
+    fireEvent.change(screen.getByLabelText('test editor'), {
+      target: { value: 'edited' },
+    })
+    await act(async () => {
+      await i18n.changeLanguage('ko')
+    })
+    expect(listen).toHaveBeenCalledTimes(registered)
+  })
+
+  it('dispatches current command handlers after the language changes', async () => {
+    await mount(false, { ...snapshot, normalizationWarning: true })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('ko')
+      })
+      act(() => listeners.get('app-command')?.({ payload: 'save' }))
+      await waitFor(() => expect(api.saveDocument).toHaveBeenCalledOnce())
+      expect(confirm).toHaveBeenCalledWith(i18n.t('mixedLineWarning'))
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('disposes native registrations that finish after unmount', async () => {
+    let finish!: (dispose: () => void) => void
+    const dispose = vi.fn()
+    vi.mocked(listen).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    await mount(false)
+    cleanup()
+    await act(async () => {
+      finish(dispose)
+    })
+    expect(dispose).toHaveBeenCalledOnce()
   })
 })
