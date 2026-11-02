@@ -1,0 +1,34 @@
+[package]
+name = "yet-another-notepad"
+version = "0.1.0"
+description = "A fast, local-first text and Markdown notepad"
+authors = ["gloz9102"]
+edition = "2021"
+
+[lib]
+name = "yet_another_notepad_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+blake3 = "1"
+encoding_rs = "0.8"
+mime_guess = "2"
+notify = "8.2"
+trash = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Security"] }
