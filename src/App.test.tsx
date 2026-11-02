@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -7,6 +8,8 @@ import {
   within,
 } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { listen } from '@tauri-apps/api/event'
+import i18n from './i18n'
 import App from './App'
 import { useDocumentStore } from './stores/documentStore'
 import { editorSessions } from './lib/editorSessions'
@@ -342,5 +345,51 @@ describe('tab shortcuts', () => {
     expect(activeId()).toBe('second')
     press({ code: 'BracketLeft', key: '{', ctrlKey: true, shiftKey: true })
     expect(activeId()).toBe('second')
+  })
+})
+
+describe('native listener lifecycle', () => {
+  it('keeps native registrations stable across edits and language changes', async () => {
+    await mount(false)
+    const registered = vi.mocked(listen).mock.calls.length
+    fireEvent.change(screen.getByLabelText('test editor'), {
+      target: { value: 'edited' },
+    })
+    await act(async () => {
+      await i18n.changeLanguage('ko')
+    })
+    expect(listen).toHaveBeenCalledTimes(registered)
+  })
+
+  it('dispatches current command handlers after the language changes', async () => {
+    await mount(false, { ...snapshot, normalizationWarning: true })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('ko')
+      })
+      act(() => listeners.get('app-command')?.({ payload: 'save' }))
+      await waitFor(() => expect(api.saveDocument).toHaveBeenCalledOnce())
+      expect(confirm).toHaveBeenCalledWith(i18n.t('mixedLineWarning'))
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('disposes native registrations that finish after unmount', async () => {
+    let finish!: (dispose: () => void) => void
+    const dispose = vi.fn()
+    vi.mocked(listen).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    await mount(false)
+    cleanup()
+    await act(async () => {
+      finish(dispose)
+    })
+    expect(dispose).toHaveBeenCalledOnce()
   })
 })

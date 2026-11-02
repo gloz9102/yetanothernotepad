@@ -1,7 +1,7 @@
 use encoding_rs::{EUC_KR, UTF_16BE, UTF_16LE};
 use serde::{Deserialize, Serialize};
 
-use super::{DocumentError, DocumentResult};
+use super::types::{DocumentError, DocumentResult};
 
 pub const MAX_DOCUMENT_BYTES: usize = 10 * 1024 * 1024;
 

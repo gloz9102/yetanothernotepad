@@ -12,7 +12,12 @@ use std::{
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
-use super::{DocumentError, DocumentResult, DocumentService, EXTERNAL_CHANGE_EVENT};
+use super::{
+    service::DocumentService,
+    types::{DocumentError, DocumentResult},
+};
+
+const EXTERNAL_CHANGE_EVENT: &str = "document-external-change";
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(150);
 
