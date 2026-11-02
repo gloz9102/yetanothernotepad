@@ -12,11 +12,15 @@
 - UTF-8, UTF-8 BOM, UTF-16 LE/BE, CP949 및 LF/CRLF 보존
 - 문서별 1초 지연·연속 입력 시 최대 5초 간격 복구본과 비정상 종료 복구
 - 이벤트 기반 외부 파일 변경 감지와 안전한 다시 읽기/덮어쓰기 확인
-- 드래그 앤 드롭 열기, 네이티브 File/Edit/View 메뉴, 키보드 탭 전환
+- 선택한 모든 줄과 줄 번호 강조(여러 커서 포함)
+- 분할 뷰에서 원문 선택 줄과 리치뷰 블록의 상호 강조
+- 드래그 앤 드롭 열기(일부 파일이 열리지 않아도 나머지는 열고 실패를 알림), 네이티브 File/Edit/View 메뉴, 키보드 탭·뷰 모드 전환
 - 시스템/라이트/다크 테마와 한국어/영어
 - Windows 11 x64 NSIS, macOS 13+ Intel/Apple Silicon DMG
 
 Raw HTML, Mermaid, 수식, 원격 이미지는 렌더링하지 않습니다. Markdown 리치뷰는 512 KiB까지 자동 갱신하고 512 KiB 초과 2 MiB 이하는 수동 갱신합니다. 2 MiB를 넘으면 원문 편집만 제공하며 문서와 로컬 이미지의 최대 크기는 각각 10 MiB입니다.
+
+분할 뷰에서 원문의 커서나 선택 줄에 해당하는 리치뷰 블록(문단, 제목, 목록 항목, 표 행, 코드 블록)이 강조되고, 리치뷰에서 블록을 클릭하거나 선택하면 해당 원문 줄이 강조됩니다. 강조는 블록 단위이며 리치뷰가 수동 갱신 상태(512 KiB 초과)일 때는 동작하지 않습니다. 원문 쪽 강조는 원문의 선택을 바꾸거나 편집하면 사라집니다.
 
 새 문서는 기본 TXT로 시작합니다. 저장하기 전에는 툴바의 `TXT | Markdown`으로 형식을 바꿀 수 있으며, Markdown으로 전환하면 내용과 Undo history를 유지한 채 분할 미리보기가 열립니다. 저장된 파일은 실제 확장자를 문서 형식으로 사용하므로 형식 전환이 표시되지 않습니다.
 
@@ -82,14 +86,24 @@ pnpm tauri build
 
 GitHub Actions는 프론트엔드와 Rust 검사가 성공한 뒤 Windows x64 NSIS, macOS Intel DMG, macOS Apple Silicon DMG를 각각 workflow artifact로 업로드합니다. MVP artifact는 코드 서명과 macOS 공증이 적용되지 않았으므로 운영체제가 실행 경고를 표시할 수 있습니다.
 
-## 개인용 설치 및 검증 상태 (2026-09-10)
+## 설치 및 검증 상태 (2026-11-02)
 
-- Windows: CI에서 생성한 x64 NSIS 설치 파일을 실행합니다. WebView2 런타임이 필요합니다. Windows 전용 Rust 저장 회귀 테스트를 패키징 전에 실행하도록 구성했습니다.
-- macOS: CPU에 맞는 DMG를 열고 앱을 Applications로 복사합니다. Intel과 Apple Silicon 파일을 구분합니다. 서명·공증 없는 개인용 빌드이므로 Gatekeeper 경고 없이 실행된다는 보장은 없습니다.
-- Node 24.13.0 / pnpm 10.19.0으로 프론트 검사와 빌드를 수행했습니다. macOS ARM64 테스트 DMG 생성 및 읽기 전용 마운트·앱 복사를 확인했습니다. Intel 실행 파일 교차 빌드도 통과했습니다.
-- DMG에서 테스트 폴더로 복사한 ARM64 앱의 실행, 한글 경로 저장·디스크 내용 비교·재열기, Cmd+Q 및 창 닫기 확인, 취소·저장 후 종료·버리기 종료, 강제 종료 후 미저장 내용 복구를 확인했습니다. HTTPS 링크의 기본 브라우저 실행, 로컬 이미지 표시, 외부 변경 충돌 시 원본 보존도 확인했습니다. 한글 입력은 붙여넣기로 확인했으며 IME 조합, 파일 연결·드래그 열기, HTTP·mailto 실제 실행은 미검증입니다.
-- Windows 실제 실행·NSIS 설치 및 Intel Mac 실행은 미검증입니다. Mac에서 Windows 교차 검사를 시도했지만 MSVC 도구와 llvm-rc 부재로 중단됐습니다. CI 설정 자체가 Windows 검증 성공을 의미하지 않습니다.
+- Windows: x64 NSIS 설치 파일을 실행합니다. WebView2 런타임이 필요합니다. Windows 전용 Rust 저장 회귀 테스트를 패키징 전에 실행하도록 구성했습니다.
+- macOS: CPU에 맞는 DMG를 열고 앱을 Applications로 복사합니다. Intel과 Apple Silicon 파일을 구분합니다. 서명·공증 없는 빌드이므로 Gatekeeper 경고 없이 실행된다는 보장은 없습니다.
+- Node 24.13.0 / pnpm 10.19.0에서 lint, 타입 검사, 프론트엔드 테스트 53개, Rust 테스트 21개, clippy와 프론트엔드 빌드가 통과했습니다.
+- macOS ARM64 DMG를 빌드해 읽기 전용으로 마운트한 뒤 앱 실행을 확인했습니다.
+- macOS에서 `cargo-xwin`으로 Windows x64 NSIS 설치 파일 교차 빌드에 성공했고, 실행 파일이 콘솔 창 없이 시작하는 Windows GUI 서브시스템으로 빌드된 것을 확인했습니다.
+- 이전 빌드는 Windows에서 실행되었으나 콘솔 창이 함께 열렸습니다. 이를 수정한 빌드의 Windows 설치·실행, Intel Mac 실행은 미검증입니다.
+- 2026-09-10에 Intel 실행 파일 교차 빌드가 통과했고, ARM64 앱으로 한글 경로 저장·재열기, 종료 확인 흐름, 강제 종료 후 복구, HTTPS 링크 실행, 로컬 이미지 표시, 외부 변경 충돌 시 원본 보존을 확인했습니다. IME 조합 입력, 파일 연결로 열기, 드래그 열기, HTTP·mailto 실제 실행은 미검증입니다.
+- 이번 변경(파일 드롭 처리, 뷰 모드·탭 단축키, 줄 강조, 분할 뷰 상호 강조)은 자동화 테스트로 검증했으며 실제 앱에서의 조작 확인은 아직 하지 않았습니다.
+- 저장소에 CI 설정이 있으나 원격 저장소에서 실행된 이력은 아직 없습니다.
 - 검증용 앱 식별자는 별도로 지정하며 기본 앱 식별자와 사용자 복구 경로는 유지합니다.
+
+## 알려진 제약
+
+- 원문 편집기 안에서 선택한 텍스트를 끌어 옮기는 기능은 지원하지 않습니다. Tauri의 네이티브 파일 드롭 처리가 macOS와 Windows에서 웹뷰 내부 드래그를 가로채기 때문이며, 대신 잘라내기·붙여넣기를 사용합니다.
+- 분할 뷰 상호 강조는 블록 단위입니다. 코드 블록 안의 한 줄을 선택해도 코드 블록 전체가 강조되며, 각주처럼 원문 위치가 없는 생성 요소는 강조되지 않습니다.
+- `Ctrl+Alt+숫자` 뷰 모드 단축키는 AltGr를 쓰는 일부 유럽 자판 배열과 겹칠 수 있습니다.
 
 ## 저장·종료 동작
 
@@ -118,4 +132,4 @@ Linux, 모바일, 계정, 동기화, 보관함 검색, AI, 플러그인, 자동 
 
 ## English
 
-Yet Another Notepad is a small local-first text and Markdown editor for Windows and macOS. It offers tabbed `.txt`, `.md`, and `.markdown` editing, Markdown source/split/rich views, encoding and line-ending preservation, crash recovery, safe local image rendering, and external-change conflict handling. See the Korean sections above for setup, shortcuts, verification commands, and MVP boundaries.
+Yet Another Notepad is a small local-first text and Markdown editor for Windows and macOS. It offers tabbed `.txt`, `.md`, and `.markdown` editing, Markdown source/split/rich views with keyboard shortcuts, highlighting of every selected line, block-level linked highlighting between the source and rich view in split mode, encoding and line-ending preservation, crash recovery, safe local image rendering, and external-change conflict handling. See the Korean sections above for setup, shortcuts, verification commands, and MVP boundaries.
