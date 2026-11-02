@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { SaveStatus } from '../components/StatusBar'
 import { asDocumentError, documentApi } from '../lib/api'
 import { editorSessions } from '../lib/editorSessions'
+import { showDocumentWarnings } from '../lib/documentWarnings'
 import { PREVIEW_MAX_BYTES, PREVIEW_SOFT_BYTES } from '../lib/documentPolicy'
 import { useDocumentStore } from '../stores/documentStore'
 import type {
@@ -43,10 +44,14 @@ export function useDocumentActions(
     }
   }, [])
 
-  const integrateSnapshots = useCallback((snapshots: DocumentSnapshot[]) => {
-    snapshots.forEach(seedSnapshot)
-    useDocumentStore.getState().addSnapshots(snapshots)
-  }, [])
+  const integrateSnapshots = useCallback(
+    (snapshots: DocumentSnapshot[]) => {
+      snapshots.forEach(seedSnapshot)
+      useDocumentStore.getState().addSnapshots(snapshots)
+      showDocumentWarnings(snapshots, setErrorMessage)
+    },
+    [setErrorMessage],
+  )
 
   const createDocument = useCallback(
     async (kind: DocumentKind) => {
@@ -131,7 +136,7 @@ export function useDocumentActions(
         scheduleRecoveryDocument(documentId, 0)
         if (editedDuringSave) setSaveStatus('idle')
         else showTransientSaveStatus('saved')
-        if (saved.warnings?.length) setErrorMessage(saved.warnings.join('\n'))
+        showDocumentWarnings([saved], setErrorMessage)
         return !editedDuringSave
       } catch (error) {
         const documentError = asDocumentError(error)
@@ -161,6 +166,7 @@ export function useDocumentActions(
         const reloaded = await tasks.run(documentId, () =>
           documentApi.reloadDocument(documentId),
         )
+        showDocumentWarnings([reloaded], setErrorMessage)
         if (
           editorSessions.getMetrics(documentId).version !== requestedVersion
         ) {
@@ -179,7 +185,13 @@ export function useDocumentActions(
         reportError(error)
       }
     },
-    [persistRecoveryDocument, reportError, scheduleRecoveryDocument, tasks],
+    [
+      persistRecoveryDocument,
+      reportError,
+      scheduleRecoveryDocument,
+      setErrorMessage,
+      tasks,
+    ],
   )
 
   const changeDocumentKind = useCallback(

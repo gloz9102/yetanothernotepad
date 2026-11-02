@@ -316,6 +316,72 @@ describe('view mode shortcuts', () => {
 })
 
 describe('tab shortcuts', () => {
+  it('keeps only the native-closing tab read-only across switches and unlocks on failure', async () => {
+    const second = {
+      ...snapshot,
+      id: 'second',
+      path: '/test/second.txt',
+      displayName: 'second.txt',
+    }
+    api.restoreSession.mockResolvedValue({
+      documents: [snapshot, second].map((document) => ({
+        document,
+        dirty: false,
+        viewMode: 'source',
+        cursor: 0,
+        scrollTop: 0,
+        externalChange: false,
+      })),
+      activeId: snapshot.id,
+    })
+    let fail!: (error: unknown) => void
+    api.closeDocument.mockReturnValueOnce(
+      new Promise<void>((_, reject) => {
+        fail = reject
+      }),
+    )
+    render(<App />)
+    await screen.findByLabelText('test editor')
+    fireEvent.keyDown(window, { key: 'w', ctrlKey: true })
+    await waitFor(() => expect(api.closeDocument).toHaveBeenCalledOnce())
+    expect(screen.getByLabelText('test editor')).toHaveAttribute('readonly')
+    fireEvent.keyDown(window, { key: '2', ctrlKey: true })
+    expect(screen.getByLabelText('test editor')).not.toHaveAttribute('readonly')
+    fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+    expect(screen.getByLabelText('test editor')).toHaveAttribute('readonly')
+    await act(async () =>
+      fail({ code: 'WRITE_FAILED', message: 'native close failed' }),
+    )
+    expect(screen.getByLabelText('test editor')).not.toHaveAttribute('readonly')
+    expect(useDocumentStore.getState().documentsById[snapshot.id]).toBeDefined()
+  })
+
+  it('selects the previous tab for WebKitGTK Ctrl+Shift+Tab with an Unidentified key', async () => {
+    const second = { ...snapshot, id: 'second', displayName: 'second.txt' }
+    const third = { ...snapshot, id: 'third', displayName: 'third.txt' }
+    api.restoreSession.mockResolvedValue({
+      documents: [snapshot, second, third].map((document) => ({
+        document,
+        dirty: false,
+        viewMode: 'source',
+        cursor: 0,
+        scrollTop: 0,
+        externalChange: false,
+      })),
+      activeId: second.id,
+    })
+    render(<App />)
+    await screen.findByLabelText('test editor')
+
+    fireEvent.keyDown(window, {
+      ctrlKey: true,
+      shiftKey: true,
+      key: 'Unidentified',
+      code: 'Tab',
+    })
+    expect(useDocumentStore.getState().activeId).toBe(snapshot.id)
+  })
+
   it('cycles tabs with Ctrl+Tab and Cmd+Shift+] / [', async () => {
     const second = { ...snapshot, id: 'second', displayName: 'second.txt' }
     api.restoreSession.mockResolvedValue({

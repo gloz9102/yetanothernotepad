@@ -47,6 +47,38 @@ it('cancels native text drags that the file-drop handler would swallow', () => {
   expect(dragStart.defaultPrevented).toBe(true)
 })
 
+it('synchronously blocks input, transactions, and replacement while native close owns the editor', () => {
+  const { container, view } = renderEditor('keep me')
+  const content = container.querySelector<HTMLElement>('.cm-content')!
+  let unlock!: () => void
+  act(() => {
+    unlock = editorSessions.lockEditing('editor')
+  })
+  expect(view.state.readOnly).toBe(true)
+  expect(content.getAttribute('contenteditable')).toBe('false')
+  const input = new InputEvent('beforeinput', {
+    inputType: 'insertText',
+    data: 'lost',
+    bubbles: true,
+    cancelable: true,
+  })
+  content.dispatchEvent(input)
+  expect(input.defaultPrevented).toBe(true)
+  act(() => {
+    view.dispatch({ changes: { from: 0, insert: 'blocked' } })
+    editorSessions.replaceContent('editor', 'blocked replacement', {
+      preserveUndo: true,
+    })
+  })
+  expect(view.state.doc.toString()).toBe('keep me')
+  expect(editorSessions.materialize('editor').content).toBe('keep me')
+  act(() => unlock())
+  expect(view.state.readOnly).toBe(false)
+  expect(content.getAttribute('contenteditable')).toBe('true')
+  act(() => view.dispatch({ changes: { from: 0, insert: 'allowed ' } }))
+  expect(view.state.doc.toString()).toBe('allowed keep me')
+})
+
 describe('selected line highlight', () => {
   const lines = 'one\ntwo\nthree\nfour'
   const highlighted = (container: HTMLElement) => ({

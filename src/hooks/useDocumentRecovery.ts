@@ -45,6 +45,7 @@ export function useDocumentRecovery(
         await documentApi.updateRecoveryDocument({
           documentId,
           content: materialized.content,
+          baseRevision: document.revision,
           dirty: document.dirty,
           viewMode: document.viewMode,
           cursor: metrics.cursor,

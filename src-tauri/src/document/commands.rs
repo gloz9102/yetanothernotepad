@@ -15,9 +15,10 @@ use super::{
     service::{open_paths_in, DocumentService, OpenedPaths},
     types::{
         AssetPayload, DocumentError, DocumentKind, DocumentKindUpdate, DocumentResult,
-        DocumentSnapshot, MenuContextUpdate, RecoveryDocumentUpdate, RecoveryLayoutUpdate,
-        RestoredDocument, RestoredSession, SaveDocumentRequest,
+        DocumentSnapshot, DocumentWarning, MenuContextUpdate, RecoveryDocumentUpdate,
+        RecoveryLayoutUpdate, RestoredDocument, RestoredSession, SaveDocumentRequest,
     },
+    watch_sync::WatchSync,
     watcher::FileWatcher,
 };
 
@@ -26,7 +27,7 @@ const DOCUMENTS_OPEN_FAILED_EVENT: &str = "documents-open-failed";
 
 pub(super) struct AppState {
     service: Arc<Mutex<DocumentService>>,
-    watcher: Mutex<FileWatcher>,
+    watch_sync: WatchSync,
     startup_paths: Mutex<Vec<PathBuf>>,
     exit_requested: AtomicBool,
     pub(super) exit_approved: AtomicBool,
@@ -39,12 +40,16 @@ impl AppState {
         startup_paths: Vec<PathBuf>,
     ) -> Self {
         Self {
+            watch_sync: WatchSync::new(service.clone(), watcher),
             service,
-            watcher: Mutex::new(watcher),
             startup_paths: Mutex::new(startup_paths),
             exit_requested: AtomicBool::new(false),
             exit_approved: AtomicBool::new(false),
         }
+    }
+
+    pub(super) fn stop_watch_retries(&self) {
+        self.watch_sync.stop();
     }
 }
 
@@ -129,13 +134,22 @@ pub(super) async fn reload_document(
     document_id: String,
     state: State<'_, AppState>,
 ) -> DocumentResult<DocumentSnapshot> {
+    reload_document_in(&state, document_id).await
+}
+
+async fn reload_document_in(
+    state: &AppState,
+    document_id: String,
+) -> DocumentResult<DocumentSnapshot> {
     let service = state.service.clone();
-    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+    let mut snapshot = tauri::async_runtime::spawn_blocking(move || {
         lock_service_arc(&service)?.reload_document(&document_id)
     })
     .await
     .map_err(join_error)??;
-    sync_watches(&state)?;
+    if let Some(warning) = sync_watches_after_commit(state, "Reloaded") {
+        snapshot.warnings.push(warning);
+    }
     Ok(snapshot)
 }
 
@@ -144,8 +158,13 @@ pub(super) fn close_document(
     document_id: String,
     state: State<'_, AppState>,
 ) -> DocumentResult<()> {
-    lock_service(&state)?.close_document(&document_id)?;
-    sync_watches(&state)
+    close_document_in(&state, &document_id)
+}
+
+fn close_document_in(state: &AppState, document_id: &str) -> DocumentResult<()> {
+    lock_service(state)?.close_document(document_id)?;
+    sync_watches_after_commit(state, "Closed");
+    Ok(())
 }
 
 #[tauri::command]
@@ -208,15 +227,20 @@ pub(super) fn cancel_exit(state: State<'_, AppState>) {
 
 #[tauri::command]
 pub(super) fn complete_exit(app: AppHandle, state: State<'_, AppState>) -> DocumentResult<()> {
+    approve_exit(&state)?;
+    app.exit(0);
+    Ok(())
+}
+
+fn approve_exit(state: &AppState) -> DocumentResult<()> {
     if !state.exit_requested.load(Ordering::SeqCst) {
         return Err(DocumentError::new(
             "INVALID_STATE",
             "No exit was requested.",
         ));
     }
-    lock_service(&state)?.discard_recovery()?;
+    lock_service(state)?.discard_recovery()?;
     state.exit_approved.store(true, Ordering::SeqCst);
-    app.exit(0);
     Ok(())
 }
 
@@ -230,15 +254,21 @@ pub(super) fn request_exit(app: &AppHandle) {
 
 #[tauri::command]
 pub(super) fn restore_session(state: State<'_, AppState>) -> DocumentResult<RestoredSession> {
-    let mut restored = lock_service(&state)?.restore_session();
+    restore_session_in(&state)
+}
+
+fn restore_session_in(state: &AppState) -> DocumentResult<RestoredSession> {
     let startup_paths = {
         let mut paths = state.startup_paths.lock().map_err(|_| {
             DocumentError::new("WRITE_FAILED", "The startup path registry is unavailable.")
         })?;
         std::mem::take(&mut *paths)
     };
+    let mut service = lock_service(state)?;
+    let mut restored = service.restore_session();
     // A startup file that cannot be opened must not discard the recovered session.
-    let startup_documents = open_paths(&state, &startup_paths)?.documents;
+    let startup_documents = open_paths_in(&mut service, &startup_paths).documents;
+    drop(service);
     for document in startup_documents {
         if !restored
             .documents
@@ -258,7 +288,11 @@ pub(super) fn restore_session(state: State<'_, AppState>) -> DocumentResult<Rest
             });
         }
     }
-    sync_watches(&state)?;
+    if let Some(warning) = sync_watches_after_commit(state, "Restored") {
+        for restored in &mut restored.documents {
+            restored.document.warnings.push(warning.clone());
+        }
+    }
     Ok(restored)
 }
 
@@ -296,16 +330,14 @@ fn save_with_mode(
 
     let saved = lock_service(state)?.save_document(&request, target_path, force)?;
     let mut saved = saved;
-    if let Err(error) = sync_watches(state) {
-        saved
-            .warnings
-            .push(format!("Saved, but file monitoring failed: {error}"));
+    if let Some(warning) = sync_watches_after_commit(state, "Saved") {
+        saved.warnings.push(warning);
     }
     Ok(Some(saved))
 }
 
 fn lock_service<'a>(
-    state: &'a State<'_, AppState>,
+    state: &'a AppState,
 ) -> DocumentResult<std::sync::MutexGuard<'a, DocumentService>> {
     state
         .service
@@ -328,13 +360,20 @@ fn join_error(error: impl fmt::Display) -> DocumentError {
     )
 }
 
-fn sync_watches(state: &State<'_, AppState>) -> DocumentResult<()> {
-    let directories = lock_service(state)?.watched_directories();
-    state
-        .watcher
-        .lock()
-        .map_err(|_| DocumentError::new("WRITE_FAILED", "The file watcher is unavailable."))?
-        .sync(&directories)
+fn sync_watches(state: &AppState) -> DocumentResult<()> {
+    state.watch_sync.sync()
+}
+
+// Document state has already committed. Monitoring errors must never turn that
+// success into an IPC failure. Snapshots carry warnings; void commands log them.
+fn sync_watches_after_commit(state: &AppState, operation: &str) -> Option<DocumentWarning> {
+    sync_watches(state).err().map(|error| {
+        eprintln!("{operation}: FILE_MONITORING_FAILED: {error}");
+        DocumentWarning::Monitoring {
+            code: "FILE_MONITORING_FAILED",
+            details: error.to_string(),
+        }
+    })
 }
 
 impl OpenedPaths {
@@ -351,9 +390,13 @@ impl OpenedPaths {
     }
 }
 
-fn open_paths(state: &State<'_, AppState>, paths: &[PathBuf]) -> DocumentResult<OpenedPaths> {
-    let opened = open_paths_in(&mut *lock_service(state)?, paths);
-    sync_watches(state)?;
+fn open_paths(state: &AppState, paths: &[PathBuf]) -> DocumentResult<OpenedPaths> {
+    let mut opened = open_paths_in(&mut *lock_service(state)?, paths);
+    if let Some(warning) = sync_watches_after_commit(state, "Opened") {
+        for document in &mut opened.documents {
+            document.warnings.push(warning.clone());
+        }
+    }
     Ok(opened)
 }
 
@@ -383,5 +426,196 @@ pub(super) fn open_paths_and_emit(app: &AppHandle, paths: &[PathBuf]) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, sync::mpsc};
+
+    fn assert_monitoring_warning(warning: &DocumentWarning) {
+        let encoded = serde_json::to_value(warning).unwrap();
+        assert_eq!(encoded["code"], "FILE_MONITORING_FAILED");
+        assert!(encoded["details"]
+            .as_str()
+            .unwrap()
+            .contains("WRITE_FAILED"));
+    }
+
+    fn state_with_missing_watch(
+        directory: &std::path::Path,
+    ) -> (AppState, DocumentSnapshot, PathBuf) {
+        let parent = directory.join("missing-watch");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("note.txt");
+        fs::write(&path, "base").unwrap();
+        let mut service = DocumentService::new(directory.join("session.json"));
+        let document = open_paths_in(&mut service, std::slice::from_ref(&path))
+            .documents
+            .remove(0);
+        service
+            .update_recovery_document(RecoveryDocumentUpdate {
+                document_id: document.id.clone(),
+                content: "draft".into(),
+                base_revision: Some(document.revision.clone()),
+                dirty: true,
+                view_mode: "source".into(),
+                cursor: 2,
+                scroll_top: 3.0,
+            })
+            .unwrap();
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(&parent).unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let state = AppState::new(
+            Arc::new(Mutex::new(service)),
+            FileWatcher::new(sender).unwrap(),
+            Vec::new(),
+        );
+        assert!(sync_watches(&state).is_err());
+        (state, document, parent)
+    }
+
+    #[test]
+    fn stalled_watcher_cannot_block_recycling_exit_approval_or_bounded_shutdown() {
+        use super::super::watch_sync::sync_document_watches;
+        use std::{
+            sync::atomic::AtomicUsize,
+            time::{Duration, Instant},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let (mut state, _, _) = state_with_missing_watch(directory.path());
+        let service = state.service.clone();
+        let calls = AtomicUsize::new(0);
+        let (started, entered) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let resume = Mutex::new(resume);
+        let (finished, done) = mpsc::channel();
+        state.watch_sync = WatchSync::with_intervals(
+            Arc::new(move || {
+                sync_document_watches(&service, |_| {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Err(DocumentError::new("WRITE_FAILED", "retry"));
+                    }
+                    started.send(()).unwrap();
+                    resume
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                    finished.send(()).unwrap();
+                    Ok(())
+                })
+            }),
+            Duration::from_millis(1),
+            Duration::from_millis(4),
+        );
+        assert!(sync_watches(&state).is_err());
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(state.service.try_lock().is_ok());
+        state.exit_requested.store(true, Ordering::SeqCst);
+        let began = Instant::now();
+        approve_exit(&state).unwrap();
+        assert!(state.exit_approved.load(Ordering::SeqCst));
+        assert!(!directory.path().join("session.json").exists());
+        state
+            .watch_sync
+            .stop_with_timeout(Duration::from_millis(20));
+        assert!(began.elapsed() < Duration::from_secs(1));
+        release.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    fn committed_close_succeeds_when_monitoring_fails_and_later_sync_retries() {
+        let directory = tempfile::tempdir().unwrap();
+        let (state, remaining, missing) = state_with_missing_watch(directory.path());
+        let closing = lock_service(&state)
+            .unwrap()
+            .new_document(DocumentKind::Text);
+        close_document_in(&state, &closing.id).unwrap();
+        assert!(lock_service(&state)
+            .unwrap()
+            .save_context(&closing.id)
+            .is_err());
+        assert!(lock_service(&state)
+            .unwrap()
+            .save_context(&remaining.id)
+            .is_ok());
+        assert!(sync_watches(&state).is_err());
+        fs::create_dir(missing).unwrap();
+        sync_watches(&state).unwrap();
+        let restored =
+            DocumentService::new(directory.path().join("session.json")).restore_session();
+        assert_eq!(restored.documents.len(), 1);
+        assert_eq!(restored.documents[0].document.id, remaining.id);
+    }
+
+    #[test]
+    fn close_still_propagates_recovery_failure_and_keeps_the_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let (state, document, _) = state_with_missing_watch(directory.path());
+        let session = directory.path().join("session.json");
+        fs::remove_file(&session).unwrap();
+        fs::create_dir(&session).unwrap();
+        assert!(close_document_in(&state, &document.id).is_err());
+        assert!(lock_service(&state)
+            .unwrap()
+            .save_context(&document.id)
+            .is_ok());
+    }
+
+    #[test]
+    fn open_keeps_snapshots_and_read_errors_when_monitoring_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let (state, _, _) = state_with_missing_watch(directory.path());
+        let path = directory.path().join("opened.txt");
+        fs::write(&path, "opened").unwrap();
+        let opened = open_paths(&state, &[path, directory.path().join("absent.txt")]).unwrap();
+        assert_eq!(opened.documents.len(), 1);
+        assert_eq!(opened.documents[0].content, "opened");
+        assert_monitoring_warning(&opened.documents[0].warnings[0]);
+        assert_eq!(opened.error.unwrap().code, "NOT_FOUND");
+    }
+
+    #[test]
+    fn reload_returns_the_committed_snapshot_with_a_monitoring_warning() {
+        let directory = tempfile::tempdir().unwrap();
+        let (state, _, _) = state_with_missing_watch(directory.path());
+        let path = directory.path().join("reload.txt");
+        fs::write(&path, "before").unwrap();
+        let opened = open_paths(&state, std::slice::from_ref(&path)).unwrap();
+        let id = opened.documents[0].id.clone();
+        fs::write(path, "after").unwrap();
+        let reloaded = tauri::async_runtime::block_on(reload_document_in(&state, id)).unwrap();
+        assert_eq!(reloaded.content, "after");
+        assert_monitoring_warning(&reloaded.warnings[0]);
+    }
+
+    #[test]
+    fn restore_keeps_recovery_and_startup_documents_when_monitoring_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let (previous, recovered, _) = state_with_missing_watch(directory.path());
+        drop(previous);
+        let startup = directory.path().join("startup.txt");
+        fs::write(&startup, "startup").unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let state = AppState::new(
+            Arc::new(Mutex::new(DocumentService::new(
+                directory.path().join("session.json"),
+            ))),
+            FileWatcher::new(sender).unwrap(),
+            vec![startup],
+        );
+        let restored = restore_session_in(&state).unwrap();
+        assert_eq!(restored.documents.len(), 2);
+        assert_eq!(restored.documents[0].document.id, recovered.id);
+        assert_eq!(restored.documents[0].document.content, "draft");
+        assert!(restored.documents[0].dirty);
+        assert_eq!(restored.documents[1].document.content, "startup");
+        for restored in restored.documents {
+            assert_monitoring_warning(&restored.document.warnings[0]);
+        }
     }
 }

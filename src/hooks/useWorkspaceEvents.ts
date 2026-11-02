@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { documentApi } from '../lib/api'
 import { editorSessions } from '../lib/editorSessions'
+import { showDocumentWarnings } from '../lib/documentWarnings'
 import { useDocumentStore } from '../stores/documentStore'
 import type {
   AppCommand,
@@ -50,6 +51,10 @@ export function useWorkspaceEvents(
       .then(async (session) => {
         session.documents.forEach(seedRestored)
         useDocumentStore.getState().hydrate(session.documents, session.activeId)
+        showDocumentWarnings(
+          session.documents.map((restored) => restored.document),
+          callbacksRef.current.reportError,
+        )
         if (session.documents.length === 0)
           await callbacksRef.current.createDocument('text')
       })

@@ -16,6 +16,7 @@ import { useDocumentRecovery } from './hooks/useDocumentRecovery'
 import { useDocumentRuntime } from './hooks/useDocumentRuntime'
 import { useWorkspaceEvents } from './hooks/useWorkspaceEvents'
 import { asDocumentError } from './lib/api'
+import { useDocumentMessages } from './lib/documentWarnings'
 import { previewPolicy } from './lib/documentPolicy'
 import { useDocumentStore } from './stores/documentStore'
 import './styles.css'
@@ -27,11 +28,13 @@ export default function App() {
   )
   const hydrated = useDocumentStore((state) => state.hydrated)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const reportError = useCallback((error: unknown) => {
-    setErrorMessage(asDocumentError(error).message)
-  }, [])
-  const dismissError = useCallback(() => setErrorMessage(null), [])
+  const { errorMessage, setErrorMessage, dismissError } = useDocumentMessages()
+  const reportError = useCallback(
+    (error: unknown) => {
+      setErrorMessage(asDocumentError(error).message)
+    },
+    [setErrorMessage],
+  )
   const toggleSettings = useCallback(() => setSettingsOpen((open) => !open), [])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const runtime = useDocumentRuntime()
@@ -107,7 +110,13 @@ export default function App() {
         )}
         <DocumentWorkspace
           activeDocument={activeDocument}
-          locked={locked}
+          locked={
+            locked ||
+            Boolean(
+              activeDocument &&
+              close.closingDocumentIds.includes(activeDocument.id),
+            )
+          }
           manualPreviews={preview.manualPreviews}
           handleEditorChange={preview.handleEditorChange}
           refreshManualPreview={preview.refreshManualPreview}

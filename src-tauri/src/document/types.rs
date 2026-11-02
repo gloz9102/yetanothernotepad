@@ -56,7 +56,20 @@ pub(super) struct DocumentSnapshot {
     pub(super) revision: String,
     pub(super) read_only: bool,
     pub(super) normalization_warning: bool,
-    pub(super) warnings: Vec<String>,
+    pub(super) warnings: Vec<DocumentWarning>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(super) enum DocumentWarning {
+    Text(String),
+    Monitoring { code: &'static str, details: String },
+}
+
+impl From<String> for DocumentWarning {
+    fn from(message: String) -> Self {
+        Self::Text(message)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +111,8 @@ pub(super) struct DocumentKindUpdate {
 pub(super) struct RecoveryDocumentUpdate {
     pub(super) document_id: String,
     pub(super) content: String,
+    #[serde(default)]
+    pub(super) base_revision: Option<String>,
     pub(super) dirty: bool,
     pub(super) view_mode: String,
     pub(super) cursor: usize,

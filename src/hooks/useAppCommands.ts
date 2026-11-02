@@ -100,7 +100,8 @@ export function useAppCommands(
         }
         return
       }
-      if (event.key === 'Tab') {
+      // WebKitGTK reports Shift+Tab as key="Unidentified", code="Tab".
+      if (event.code === 'Tab' || event.key === 'Tab') {
         event.preventDefault()
         activateRelative(event.shiftKey ? -1 : 1)
         return

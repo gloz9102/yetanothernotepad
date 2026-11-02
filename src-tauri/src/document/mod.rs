@@ -6,6 +6,7 @@ mod recovery;
 mod service;
 mod storage;
 mod types;
+mod watch_sync;
 mod watcher;
 
 use std::{
@@ -117,6 +118,7 @@ pub fn run() {
         .expect("error while building Yet Another Notepad");
 
     app.run(|app_handle, event| match event {
+        RunEvent::Exit => app_handle.state::<AppState>().stop_watch_retries(),
         RunEvent::WindowEvent {
             event: WindowEvent::CloseRequested { api, .. },
             ..

@@ -10,6 +10,13 @@ export interface LineRange {
 }
 export type ExternalChangeKind = 'modified' | 'deleted'
 
+export type DocumentWarning =
+  | string
+  | {
+      code: 'FILE_MONITORING_FAILED'
+      details: string
+    }
+
 export interface DocumentSnapshot {
   id: string
   displayName: string
@@ -20,7 +27,7 @@ export interface DocumentSnapshot {
   lineEnding: LineEnding
   revision: string
   readOnly: boolean
-  warnings?: string[]
+  warnings?: DocumentWarning[]
   normalizationWarning: boolean
 }
 
@@ -61,6 +68,7 @@ export interface SaveDocumentRequest {
 export interface RecoveryDocumentUpdate {
   documentId: string
   content: string
+  baseRevision?: string
   dirty: boolean
   viewMode: ViewMode
   cursor: number

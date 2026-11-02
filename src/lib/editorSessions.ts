@@ -1,13 +1,15 @@
 import { redo, undo } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import {
+  Compartment,
   EditorSelection,
   EditorState,
+  Prec,
   Text,
   Transaction,
   type Extension,
 } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
 import type {
   DocumentKind,
   DocumentSnapshot,
@@ -45,6 +47,46 @@ class EditorSessionRegistry {
   private sessions = new Map<string, EditorSession>()
   private activeView: EditorView | null = null
   private activeDocumentId: string | null = null
+  private editLocks = new Map<string, Set<symbol>>()
+  private closeLock = new Compartment()
+
+  isEditingLocked(documentId: string) {
+    return this.editLocks.has(documentId)
+  }
+
+  lockEditing(documentId: string) {
+    const token = Symbol(documentId)
+    const owners = this.editLocks.get(documentId) ?? new Set<symbol>()
+    owners.add(token)
+    this.editLocks.set(documentId, owners)
+    this.updateEditingLock(documentId)
+    return () => {
+      if (!owners.delete(token) || owners.size) return
+      if (this.editLocks.get(documentId) !== owners) return
+      this.editLocks.delete(documentId)
+      this.updateEditingLock(documentId)
+    }
+  }
+
+  private lockExtension(documentId: string): Extension {
+    return this.isEditingLocked(documentId)
+      ? Prec.highest([
+          EditorState.readOnly.of(true),
+          EditorView.editable.of(false),
+        ])
+      : []
+  }
+
+  private updateEditingLock(documentId: string) {
+    const session = this.sessions.get(documentId)
+    if (!session?.state) return
+    const effects = this.closeLock.reconfigure(this.lockExtension(documentId))
+    if (this.activeDocumentId === documentId && this.activeView) {
+      this.activeView.dispatch({ effects })
+    } else {
+      session.state = session.state.update({ effects }).state
+    }
+  }
 
   seed(
     snapshot: DocumentSnapshot,
@@ -93,7 +135,15 @@ class EditorSessionRegistry {
       const state = EditorState.create({
         doc: session.seedContent,
         selection: EditorSelection.cursor(session.seedCursor),
-        extensions,
+        extensions: [
+          extensions,
+          this.closeLock.of(this.lockExtension(documentId)),
+          EditorState.transactionFilter.of((transaction) =>
+            transaction.docChanged && this.isEditingLocked(documentId)
+              ? []
+              : transaction,
+          ),
+        ],
       })
       session.state = state
       if (session.savedDoc && !state.doc.eq(session.savedDoc)) {
@@ -198,6 +248,7 @@ class EditorSessionRegistry {
     content: string,
     options: { preserveUndo: boolean },
   ) {
+    if (this.isEditingLocked(documentId)) return
     const session = this.require(documentId)
     const state = session.state
     if (!state) {
@@ -298,6 +349,7 @@ class EditorSessionRegistry {
   }
 
   reset() {
+    this.editLocks.clear()
     this.sessions.clear()
     this.activeDocumentId = null
     this.activeView = null
